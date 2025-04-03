@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "802157028016",
+    "project_id": "afetapp-b512d",
+    "storage_bucket": "afetapp-b512d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:802157028016:android:0dab74f6792eb711741175",
+        "android_client_info": {
+          "package_name": "com.example.bitirme_projesi"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDl3gfNu0EVc-TxerXl6VcQ8B6L_50xccA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
