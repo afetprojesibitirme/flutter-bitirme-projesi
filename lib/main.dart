@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'homepage.dart';
+import 'question_page.dart';
+import 'profile_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,7 +22,12 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.red,
         scaffoldBackgroundColor: Colors.grey[800],
       ),
-      home: const HomePage(),
+      initialRoute: '/questions',
+      routes: {
+        '/questions': (context) => const QuestionPage(),
+        '/home': (context) => const HomePage(),
+        '/profile': (context) => const ProfilePage(),
+      },
     );
   }
 }

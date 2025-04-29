@@ -1,3 +1,4 @@
+import 'package:bitirme_projesi/navbar.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'services.dart';
@@ -88,10 +89,10 @@ class _HomePageState extends State<HomePage> {
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
 
-    final buttonWidth = screenWidth * 0.6;
-    final buttonHeight = screenHeight * 0.07;
-    final minButtonWidth = 250.0;
-    final minButtonHeight = 50.0;
+    final buttonWidth = screenWidth * 0.8;
+    final buttonHeight = screenHeight * 0.09;
+    final minButtonWidth = 300.0;
+    final minButtonHeight = 65.0;
 
     final finalButtonWidth =
         buttonWidth > minButtonWidth ? buttonWidth : minButtonWidth;
@@ -99,7 +100,7 @@ class _HomePageState extends State<HomePage> {
         buttonHeight > minButtonHeight ? buttonHeight : minButtonHeight;
 
     return Scaffold(
-      backgroundColor: Colors.grey[800],
+      backgroundColor: Colors.white12,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -112,18 +113,26 @@ class _HomePageState extends State<HomePage> {
                   GestureDetector(
                     onTap: _handleEmergencyButton,
                     child: Container(
-                      width: screenWidth * 0.25,
-                      height: screenWidth * 0.25,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
+                      width: screenWidth * 0.6,
+                      height: screenWidth * 0.6,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(30),
                         color: Colors.red,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.red.withOpacity(0.3),
+                            spreadRadius: 3,
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
                       child: Center(
                         child: Text(
                           'ACİL',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: screenWidth * 0.05,
+                            fontSize: screenWidth * 0.12,
                             fontWeight: FontWeight.bold,
                             shadows: [
                               Shadow(
@@ -137,55 +146,35 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   ),
-                  SizedBox(height: screenHeight * 0.05),
+                  SizedBox(height: screenHeight * 0.04),
 
                   // 112 Butonu
                   Container(
                     width: finalButtonWidth,
                     height: finalButtonHeight,
-                    decoration: BoxDecoration(
-                      color: Colors.green,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(10),
-                        topRight: Radius.circular(10),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.green.withOpacity(0.5),
-                          spreadRadius: 2,
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: ElevatedButton.icon(
+                    child: TextButton.icon(
                       onPressed: _call112,
                       icon: Icon(
                         Icons.phone,
                         color: Colors.white,
-                        size: finalButtonHeight * 0.5,
+                        size: finalButtonHeight * 0.6,
                       ),
                       label: Text(
                         '112',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: finalButtonHeight * 0.4,
+                          fontSize: finalButtonHeight * 0.5,
                           fontWeight: FontWeight.bold,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black.withOpacity(0.3),
-                              offset: const Offset(0, 2),
-                              blurRadius: 3,
-                            ),
-                          ],
                         ),
                       ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        shadowColor: Colors.transparent,
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.green,
                         minimumSize: Size(finalButtonWidth, finalButtonHeight),
                         padding: EdgeInsets.symmetric(
-                            horizontal: finalButtonWidth * 0.05),
+                            horizontal: finalButtonWidth * 0.07),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(30),
+                        ),
                       ),
                     ),
                   ),
@@ -195,58 +184,24 @@ class _HomePageState extends State<HomePage> {
                   Container(
                     width: finalButtonWidth,
                     height: finalButtonHeight,
-                    decoration: BoxDecoration(
-                      color: Colors.orange,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(10),
-                        topRight: Radius.circular(10),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.orange.withOpacity(0.5),
-                          spreadRadius: 2,
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: ElevatedButton(
+                    child: TextButton(
                       onPressed: _findNearestGatheringArea,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        shadowColor: Colors.transparent,
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.orange,
                         minimumSize: Size(finalButtonWidth, finalButtonHeight),
                         padding: EdgeInsets.symmetric(
-                            horizontal: finalButtonWidth * 0.03),
+                            horizontal: finalButtonWidth * 0.05),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(30),
+                        ),
                       ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Image.asset(
-                            'assets/edevlet.png',
-                            width: finalButtonHeight * 0.4,
-                            height: finalButtonHeight * 0.4,
-                          ),
-                          SizedBox(width: finalButtonWidth * 0.03),
-                          const Expanded(
-                            child: Text(
-                              'Toplanma Alanı Bul',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                shadows: [
-                                  Shadow(
-                                    color: Colors.black26,
-                                    offset: Offset(0, 2),
-                                    blurRadius: 3,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          SizedBox(width: finalButtonHeight * 0.4),
-                        ],
+                      child: Text(
+                        'Toplanma Alanı Bul',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                        ),
                       ),
                     ),
                   ),
@@ -256,6 +211,7 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ),
+      bottomNavigationBar: const NavBar(selectedIndex: 1),
     );
   }
 }
