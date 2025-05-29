@@ -80,7 +80,7 @@ class _QuestionPageState extends State<QuestionPage> {
     final question = questions[currentQuestionIndex];
 
     return Scaffold(
-      backgroundColor: const Color(0xFF6D6D6D),
+      backgroundColor: Colors.white12,
       body: SafeArea(
         child: Center(
           child: Container(
@@ -113,6 +113,7 @@ class _QuestionPageState extends State<QuestionPage> {
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 17,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
                           Expanded(
@@ -264,6 +265,7 @@ class _QuestionPageState extends State<QuestionPage> {
                                             style: TextStyle(
                                               color: textColor,
                                               fontSize: 15,
+                                              fontWeight: FontWeight.bold,
                                             ),
                                           ),
                                         ),

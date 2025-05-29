@@ -1,5 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseFirestore, FieldValue, GeoPoint, DocumentSnapshot;
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EmergencyServices {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -33,12 +34,32 @@ class EmergencyServices {
   Future<void> saveEmergencyLocation() async {
     try {
       Position position = await getCurrentLocation();
-      await _firestore.collection('emergencies').add({
-        'latitude': position.latitude,
-        'longitude': position.longitude,
+      
+      // Profil bilgilerini SharedPreferences'dan al
+      final prefs = await SharedPreferences.getInstance();
+      String adSoyad = prefs.getString('adSoyad') ?? 'Bilinmeyen Kullanıcı';
+      String yas = prefs.getString('yas') ?? '';
+      String kanGrubu = prefs.getString('kanGrubu') ?? '';
+      String hastaliklar = prefs.getString('hastaliklar') ?? '';
+
+      // Create GeoPoint instance
+      final geoPoint = GeoPoint(position.latitude, position.longitude);
+
+      if (adSoyad == 'Bilinmeyen Kullanıcı'|| yas== ''|| kanGrubu == '' || hastaliklar == ''){
+        throw 'Lutfen profil sayfasından bilgilerinizi girin';
+      }
+
+      // Dokümanı kullanıcının adıyla oluştur
+      await _firestore.collection('emergency').doc(adSoyad).set({
+        'nameSurname': adSoyad,
+        'age': yas,
+        'blood': kanGrubu,
+        'conditions': hastaliklar,
+        'location': geoPoint,
         'timestamp': FieldValue.serverTimestamp(),
       });
     } catch (e) {
+      print('Error saving emergency location: $e');
       throw 'Konum kaydedilemedi: $e';
     }
   }
@@ -46,43 +67,50 @@ class EmergencyServices {
   // En yakın toplanma alanını bul
   Future<Map<String, dynamic>> findNearestGatheringArea() async {
     try {
+      // Get current location
       Position currentPosition = await getCurrentLocation();
 
-      // Firestore'dan toplanma alanlarını al
-      QuerySnapshot areaSnapshot = await _firestore.collection('areas').get();
+      // Get areas document from Firestore
+      final areaDoc = await _firestore.collection('area').doc('areas').get();
+
+      if (!areaDoc.exists || !areaDoc.data()!.containsKey('areasarray')) {
+        throw 'Alan bulunamadı';
+      }
+
+      List<dynamic> areasList = areaDoc.data()!['areasarray'] as List<dynamic>;
+      
+      if (areasList.isEmpty) {
+        throw 'Alan bulunamadı';
+      }
 
       double minDistance = double.infinity;
       Map<String, dynamic> nearestArea = {};
 
-      // Her bir toplanma alanı için mesafe hesapla
-      for (var doc in areaSnapshot.docs) {
-        List<String> coordinates = (doc['areasarray'] as String)
-            .replaceAll('[', '')
-            .replaceAll(']', '')
-            .split(',');
-
-        double areaLat = double.parse(coordinates[0].trim());
-        double areaLng = double.parse(coordinates[1].trim());
-
+      for (GeoPoint geoPoint in areasList) {
         double distance = Geolocator.distanceBetween(
           currentPosition.latitude,
           currentPosition.longitude,
-          areaLat,
-          areaLng,
+          geoPoint.latitude,
+          geoPoint.longitude,
         );
 
         if (distance < minDistance) {
           minDistance = distance;
           nearestArea = {
-            'coordinates': '${areaLat}, ${areaLng}',
+            'coordinates': '${geoPoint.latitude}, ${geoPoint.longitude}',
             'distance': (distance / 1000).toStringAsFixed(2), // km cinsinden
           };
         }
       }
 
+      if (nearestArea.isEmpty) {
+        throw 'Alan bulunamadı';
+      }
+
       return nearestArea;
     } catch (e) {
-      throw 'En yakın toplanma alanı bulunamadı: $e';
+      print('Error finding nearest area: $e');
+      throw 'Alan bulunamadı';
     }
   }
 }

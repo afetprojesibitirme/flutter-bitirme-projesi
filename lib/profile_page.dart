@@ -123,7 +123,7 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF444444),
+      backgroundColor: Colors.white12,
       body: Center(
         child: Container(
           width: MediaQuery.of(context).size.width * 0.92,

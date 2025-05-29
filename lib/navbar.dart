@@ -39,7 +39,7 @@ class NavBar extends StatelessWidget {
         ),
       ],
       selectedItemColor: Colors.green,
-      backgroundColor: Colors.white24,
+      backgroundColor: Colors.white12,
       selectedFontSize: 16,
       unselectedFontSize: 14,
       selectedLabelStyle: TextStyle(fontWeight: FontWeight.bold),
