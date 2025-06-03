@@ -9,8 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart'
     show DocumentSnapshot, GeoPoint;
 import 'package:flutter/foundation.dart';
 // flutter_blue_plus paketini FlutterBluePlus ve BluetoothAdapterState için 'fbp' ön eki ile import ediyoruz
-import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp
-    hide BluetoothService;
+import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -42,7 +41,7 @@ class _HomePageState extends State<HomePage> {
         });
         if (status.contains("Bağlandı") || status.contains("Cihaz hazır")) {
           // Bağlantı sağlandığında ilk veri isteğini gönder
-          // Sadece _lastReceivedGpsData daha önce alınmadıysa iste
+          // Sadece _lastReceivedGpsData daha önce alınmadıysa veya boşsa iste
           if (_lastReceivedGpsData == null ||
               (_lastReceivedGpsData!['latitude'] == 0.0 &&
                   _lastReceivedGpsData!['longitude'] == 0.0)) {
@@ -104,15 +103,21 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-      if (!_bluetoothService.isConnected() || _lastReceivedGpsData == null) {
+      if (!_bluetoothService.isConnected() ||
+          _lastReceivedGpsData == null ||
+          (_lastReceivedGpsData!['latitude'] == 0.0 &&
+              _lastReceivedGpsData!['longitude'] == 0.0)) {
         _showSnackBar(
-            'ESP32\'ye bağlanın veya veri almayı bekleyin. Tekrar deneniyor...',
+            'ESP32\'ye bağlanın veya geçerli veri almayı bekleyin. Tekrar deneniyor...',
             isError: true);
         await _bluetoothService.scanAndConnect(); // Bağlantıyı tekrar dene
         // Veri gelene kadar beklemek veya kullanıcıya bilgi vermek gerekebilir
         await Future.delayed(
             const Duration(seconds: 3)); // Bağlantı ve veri alımı için bekle
-        if (!_bluetoothService.isConnected() || _lastReceivedGpsData == null) {
+        if (!_bluetoothService.isConnected() ||
+            _lastReceivedGpsData == null ||
+            (_lastReceivedGpsData!['latitude'] == 0.0 &&
+                _lastReceivedGpsData!['longitude'] == 0.0)) {
           _showSnackBar(
               "ESP32'den geçerli veri alınamadı, mobil konum kullanılıyor.",
               isError: true);
@@ -147,7 +152,7 @@ class _HomePageState extends State<HomePage> {
           await _emergencyServices.saveEmergencyLocation(
         latitude: latitude,
         longitude: longitude,
-        esp32NearestAreaName: nearestAreaInfo['name'],
+        esp32NearestAreaName: nearestAreaInfo['name'], // Güncellendi
         esp32DistanceToAreaM: double.tryParse(nearestAreaInfo['distance_m']),
         // Yön bilgisi için ek hesaplama gerekebilir. Basit bir placeholder şimdilik.
         esp32DirectionToArea:
@@ -183,14 +188,20 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-      if (!_bluetoothService.isConnected() || _lastReceivedGpsData == null) {
+      if (!_bluetoothService.isConnected() ||
+          _lastReceivedGpsData == null ||
+          (_lastReceivedGpsData!['latitude'] == 0.0 &&
+              _lastReceivedGpsData!['longitude'] == 0.0)) {
         _showSnackBar(
-            'ESP32\'ye bağlanın veya veri almayı bekleyin. Tekrar deneniyor...',
+            'ESP32\'ye bağlanın veya geçerli veri almayı bekleyin. Tekrar deneniyor...',
             isError: true);
         await _bluetoothService.scanAndConnect();
         await Future.delayed(
             const Duration(seconds: 3)); // Bağlantı ve veri alımı için bekle
-        if (!_bluetoothService.isConnected() || _lastReceivedGpsData == null) {
+        if (!_bluetoothService.isConnected() ||
+            _lastReceivedGpsData == null ||
+            (_lastReceivedGpsData!['latitude'] == 0.0 &&
+                _lastReceivedGpsData!['longitude'] == 0.0)) {
           _showSnackBar("ESP32'den geçerli veri alınamadı, işlem iptal.",
               isError: true);
           return; // Geçerli veri yoksa işlemi durdur
@@ -222,7 +233,8 @@ class _HomePageState extends State<HomePage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Adı: ${nearestAreaInfo['name'] ?? 'Bilinmiyor'}'),
+                  Text(
+                      'Adı: ${nearestAreaInfo['name'] ?? 'Bilinmiyor'}'), // Güncellendi
                   Text(
                       'Koordinatlar: ${nearestAreaInfo['coordinates']?.latitude.toStringAsFixed(6)}, ${nearestAreaInfo['coordinates']?.longitude.toStringAsFixed(6)}'),
                   Text('Mesafe: ${nearestAreaInfo['distance_m']} metre'),
@@ -244,7 +256,7 @@ class _HomePageState extends State<HomePage> {
                     if (lat != null && lng != null) {
                       // Google Haritalar için genel URL yapısı
                       final url =
-                          'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
+                          'http://maps.google.com/maps?q=$lat,$lng'; // Direkt koordinat ile açma
                       final uri = Uri.parse(url);
                       if (await canLaunchUrl(uri)) {
                         await launchUrl(uri,
@@ -291,12 +303,12 @@ class _HomePageState extends State<HomePage> {
     final screenHeight = MediaQuery.of(context).size.height;
     final screenWidth = MediaQuery.of(context).size.width;
 
-    final buttonWidth = screenWidth * 0.8;
-    final buttonHeight = screenHeight * 0.12; // Daha büyük butonlar için
+    final baseButtonWidth = screenWidth * 0.8;
+    final baseButtonHeight = screenHeight * 0.12;
 
     // Küçük ekranlarda butonların çok büyük olmaması için minimum/maksimum boyutlar
-    final finalButtonWidth = buttonWidth.clamp(280.0, 400.0);
-    final finalButtonHeight = buttonHeight.clamp(70.0, 100.0);
+    final finalButtonWidth = baseButtonWidth.clamp(280.0, 400.0);
+    final finalButtonHeight = baseButtonHeight.clamp(70.0, 100.0);
 
     return Scaffold(
       appBar: AppBar(
@@ -375,7 +387,9 @@ class _HomePageState extends State<HomePage> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          _lastReceivedGpsData != null
+                          _lastReceivedGpsData != null &&
+                                  (_lastReceivedGpsData!['latitude'] != 0.0 ||
+                                      _lastReceivedGpsData!['longitude'] != 0.0)
                               ? Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -393,7 +407,8 @@ class _HomePageState extends State<HomePage> {
                                         'Hız (km/s): ${_lastReceivedGpsData!['speed_kmph']?.toStringAsFixed(2) ?? 'N/A'}'),
                                   ],
                                 )
-                              : const Text('Veri bekleniyor...'),
+                              : const Text(
+                                  'Veri bekleniyor veya geçerli değil...'),
                         ],
                       ),
                     ),

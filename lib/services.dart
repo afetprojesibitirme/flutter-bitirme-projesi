@@ -1,12 +1,14 @@
+// lib/services.dart
 import 'package:cloud_firestore/cloud_firestore.dart'
     show
         FirebaseFirestore,
         FieldValue,
         GeoPoint,
         DocumentSnapshot,
-        DocumentReference;
+        DocumentReference,
+        QuerySnapshot;
 import 'package:geolocator/geolocator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Bu dosya aslında kullanılmıyor, kaldırılabilir
 import 'package:flutter/foundation.dart';
 
 class EmergencyServices {
@@ -43,23 +45,25 @@ class EmergencyServices {
     double? esp32DistanceToAreaM,
     String? esp32DirectionToArea,
     int? esp32Satellites,
-    String source = "ESP32", // "ESP32" veya "Mobile"
+    String source = "Unknown",
   }) async {
     try {
-      final docRef = await _firestore.collection('emergencies').add({
-        'location': GeoPoint(latitude, longitude),
+      DocumentReference docRef =
+          await _firestore.collection('emergency_locations').add({
+        'latitude': latitude,
+        'longitude': longitude,
         'timestamp': FieldValue.serverTimestamp(),
-        'source': source,
         'esp32_nearest_area_name': esp32NearestAreaName,
         'esp32_distance_to_area_m': esp32DistanceToAreaM,
         'esp32_direction_to_area': esp32DirectionToArea,
         'esp32_satellites': esp32Satellites,
+        'source': source,
       });
-
-      // Kaydedilen belgeyi geri döndür
+      if (kDebugMode)
+        print('Acil durum konumu Firestore\'a kaydedildi: ${docRef.id}');
       return await docRef.get();
     } catch (e) {
-      if (kDebugMode) print("Acil durum konumu kaydetme hatası: $e");
+      if (kDebugMode) print('Acil durum konumunu kaydederken hata oluştu: $e');
       rethrow;
     }
   }
@@ -67,47 +71,62 @@ class EmergencyServices {
   Future<Map<String, dynamic>> findNearestRendezvousArea(
       double currentLatitude, double currentLongitude) async {
     try {
-      final querySnapshot =
-          await _firestore.collection('rendezvous_points').get();
+      // 'area' koleksiyonundaki 'areas' belgesini al
+      DocumentSnapshot areaDoc =
+          await _firestore.collection('area').doc('areas').get();
 
-      if (querySnapshot.docs.isEmpty) {
-        throw 'Firestore\'da tanımlı toplanma alanı bulunamadı.';
+      if (!areaDoc.exists) {
+        throw 'Firestore\'da "area" koleksiyonu altında "areas" belgesi bulunamadı.';
       }
 
+      // data() metodu null dönebilir, bu yüzden kontrol etmek önemlidir.
+      // Ayrıca, döndüğü Map'in doğru türde olduğundan emin olmak için açıkça dönüştürüyoruz.
+      Map<String, dynamic>? data = areaDoc.data() as Map<String, dynamic>?;
+
+      if (data == null || !data.containsKey('areasarray')) {
+        throw 'Firestore\'daki "areas" belgesinde "areasarray" alanı bulunamadı veya hatalı formatta.';
+      }
+
+      // areasarray alanına doğrudan erişim
+      List<dynamic> rawAreas = data['areasarray'];
       List<GeoPoint> areasList = [];
-      for (var doc in querySnapshot.docs) {
-        if (doc.data().containsKey('location') &&
-            doc.data()['location'] is GeoPoint) {
-          areasList.add(doc.data()['location'] as GeoPoint);
-        } else if (doc.data().containsKey('coordinates') &&
-            doc.data()['coordinates'] is GeoPoint) {
-          // 'coordinates' olarak da tanımlanmış olabilir
-          areasList.add(doc.data()['coordinates'] as GeoPoint);
-        } else {
-          // Eğer geopoint değilse, manuel olarak GeoPoint'e çevirmeye çalış
-          var item = doc.data()['location'];
-          if (item != null &&
-              item is Map &&
-              item.containsKey('latitude') &&
-              item.containsKey('longitude')) {
-            try {
-              areasList.add(GeoPoint(item['latitude'], item['longitude']));
-            } catch (e) {
-              if (kDebugMode)
-                print("Geopoint'e dönüştürme hatası: $item, Hata: $e");
-            }
+
+      // Raw veriyi GeoPoint listesine dönüştürürken null ve hatalı formatları yönet
+      for (var item in rawAreas) {
+        if (item is GeoPoint) {
+          areasList.add(item);
+        } else if (item is Map &&
+            item.containsKey('_latitude') &&
+            item.containsKey('_longitude')) {
+          // Firebase'in bazı sürümlerinde GeoPoint'ler Map olarak dönebilir.
+          // Enlem ve boylam değerlerinin null olmadığından emin ol.
+          double? lat = item['_latitude'] as double?;
+          double? lon = item['_longitude'] as double?;
+
+          if (lat != null && lon != null) {
+            areasList.add(GeoPoint(lat, lon));
+          } else {
+            if (kDebugMode)
+              print(
+                  "Hata: Map'ten GeoPoint oluşturulurken enlem/boylam null veya hatalı: $item");
+            // Bu hatalı girişi atla, uygulamayı çökertme
           }
+        } else {
+          if (kDebugMode)
+            print("Geçersiz GeoPoint formatı algılandı ve atlandı: $item");
         }
       }
 
       if (areasList.isEmpty) {
-        throw 'Geçerli formatta toplanma alanı bulunamadı. Lütfen Firestore\'daki veriyi kontrol edin.';
+        throw 'Firestore\'dan geçerli toplanma alanı koordinatları alınamadı.';
       }
 
       double minDistance = double.infinity;
       Map<String, dynamic> nearestAreaInfo = {};
+      int nearestAreaIndex = -1; // En yakın alanın indeksi
 
-      for (GeoPoint geoPoint in areasList) {
+      for (int i = 0; i < areasList.length; i++) {
+        GeoPoint geoPoint = areasList[i];
         double distanceInMeters = Geolocator.distanceBetween(
           currentLatitude,
           currentLongitude,
@@ -117,43 +136,31 @@ class EmergencyServices {
 
         if (distanceInMeters < minDistance) {
           minDistance = distanceInMeters;
-          // Firestore belgesinden ismi almayı dene
-          String? areaName;
-          try {
-            var doc = querySnapshot.docs.firstWhere((d) =>
-                (d.data().containsKey('location') &&
-                    d.data()['location'] == geoPoint) ||
-                (d.data().containsKey('coordinates') &&
-                    d.data()['coordinates'] == geoPoint));
-            areaName = doc.data().containsKey('name')
-                ? doc.data()['name'] as String?
-                : null;
-          } catch (e) {
-            // Eğer eşleşen belge bulunamazsa veya isim alanı yoksa
-            areaName = 'Bilinmeyen Alan';
-          }
-
+          nearestAreaIndex = i;
           nearestAreaInfo = {
-            'name': areaName,
             'coordinates': GeoPoint(geoPoint.latitude, geoPoint.longitude),
-            'distance_km': (distanceInMeters / 1000).toStringAsFixed(2),
-            'distance_m': distanceInMeters.toStringAsFixed(1),
+            'distance_km': (minDistance / 1000).toStringAsFixed(2),
+            'distance_m': minDistance.toStringAsFixed(1),
           };
         }
       }
 
       if (nearestAreaInfo.isEmpty) {
-        throw 'En yakın toplanma alanı hesaplanamadı (muhtemelen hiç alan bulunamadı).';
+        throw 'En yakın toplanma alanı hesaplanamadı.';
       }
+
+      // Alanın adını indeksine göre belirle (eğer Firestore'da isim yoksa)
+      nearestAreaInfo['name'] =
+          'Area ${nearestAreaIndex + 1}'; // 1'den başlayarak isimlendir
 
       if (kDebugMode) {
         print(
-            'En yakın toplanma alanı bulundu: ${nearestAreaInfo['coordinates']}, Uzaklık: ${nearestAreaInfo['distance_km']} km');
+            'En yakın toplanma alanı bulundu: ${nearestAreaInfo['name']}, Koordinatlar: ${nearestAreaInfo['coordinates']}, Uzaklık: ${nearestAreaInfo['distance_km']} km');
       }
       return nearestAreaInfo;
     } catch (e) {
       if (kDebugMode) {
-        print("En yakın toplanma alanı bulunurken hata oluştu: $e");
+        print('En yakın toplanma alanı bulma hatası: $e');
       }
       rethrow;
     }
