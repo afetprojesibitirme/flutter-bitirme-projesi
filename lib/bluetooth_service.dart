@@ -30,8 +30,13 @@ class BluetoothService {
   Stream<String> get connectionStatusStream =>
       _connectionStatusStreamController.stream;
 
+  // ADDED: StreamController for ESP32 emergency trigger
+  final StreamController<Map<String, dynamic>>
+      _esp32EmergencyTriggerController = StreamController.broadcast();
+  Stream<Map<String, dynamic>> get esp32EmergencyTriggerStream =>
+      _esp32EmergencyTriggerController.stream;
+
   BluetoothService() {
-    // Uygulama başladığında Bluetooth durumunu dinlemeye başla
     fbp.FlutterBluePlus.adapterState.listen((state) {
       if (kDebugMode) print("Bluetooth Adaptör Durumu: $state");
       if (state == fbp.BluetoothAdapterState.on) {
@@ -40,21 +45,17 @@ class BluetoothService {
         scanAndConnect();
       } else {
         _connectionStatusStreamController.add("Bluetooth Kapalı: $state");
-        disconnectDevice(); // Bluetooth kapalıysa bağlantıyı kes
+        disconnectDevice();
       }
     });
-
-    // Zaten bağlı cihaz varsa durumu kontrol et
     _checkInitialConnection();
   }
 
-  // Uygulama başlangıcında veya yeniden başlatıldığında önceden bağlı cihazı kontrol eder
   Future<void> _checkInitialConnection() async {
     try {
       List<fbp.BluetoothDevice> connectedDevices =
           await fbp.FlutterBluePlus.connectedDevices;
       if (connectedDevices.isNotEmpty) {
-        // En son bağlandığımız cihazı bulmaya çalış (ismiyle)
         fbp.BluetoothDevice? esp32 = connectedDevices.firstWhereOrNull(
           (d) => d.platformName == esp32DeviceName,
         );
@@ -67,7 +68,7 @@ class BluetoothService {
         }
       }
       _connectionStatusStreamController.add("Cihaz Aranıyor...");
-      scanAndConnect(); // Bağlı cihaz yoksa tara ve bağlan
+      scanAndConnect();
     } catch (e) {
       if (kDebugMode) print("Initial connection check error: $e");
       _connectionStatusStreamController
@@ -75,9 +76,7 @@ class BluetoothService {
     }
   }
 
-  // Bluetooth cihazlarını tarar ve ESP32 cihazına bağlanır
   Future<void> scanAndConnect() async {
-    // isScanning.value yerine await isScanning.first kullanıldı
     if (await fbp.FlutterBluePlus.isScanning.first) {
       if (kDebugMode) print("Zaten taranıyor, yeni tarama başlatılmıyor.");
       return;
@@ -89,7 +88,6 @@ class BluetoothService {
 
     _connectionStatusStreamController.add("Cihaz Taranıyor...");
     try {
-      // Tarama sonuçlarını dinle
       var subscription = fbp.FlutterBluePlus.scanResults.listen(
         (results) async {
           for (fbp.ScanResult r in results) {
@@ -97,63 +95,52 @@ class BluetoothService {
               print(
                   'Bulunan Cihaz: ${r.device.platformName} - ${r.device.remoteId}');
             if (r.device.platformName == esp32DeviceName) {
-              fbp.FlutterBluePlus
-                  .stopScan(); // Cihaz bulunduğunda taramayı durdur
+              fbp.FlutterBluePlus.stopScan();
               _connectedDevice = r.device;
               _connectionStatusStreamController.add(
                   "Cihaz Bulundu: ${r.device.platformName}. Bağlanılıyor...");
               try {
                 await _connectedDevice!.connect(
                   timeout: const Duration(seconds: 10),
-                  autoConnect:
-                      false, // İlk bağlantı için false, manuel kontrol daha iyi
+                  autoConnect: false,
                 );
-                await _discoverServicesAndCharacteristics(); // Servis ve karakteristikleri keşfet
+                await _discoverServicesAndCharacteristics();
                 _connectionStatusStreamController
                     .add("Cihaz Bağlandı: ${r.device.platformName}");
-                _listenToConnectionState(); // Bağlantı durumunu dinle
-                requestGpsDataFromDevice(); // Bağlandıktan sonra hemen veri iste
+                _listenToConnectionState();
+                requestGpsDataFromDevice();
               } catch (e) {
                 if (kDebugMode) print("Bağlantı Hatası: $e");
                 _connectionStatusStreamController.add("Bağlantı Hatası: $e");
                 _connectedDevice = null;
-                // Bağlantı başarısız olursa tekrar tara (küçük bir gecikme ile)
                 Future.delayed(
                     const Duration(seconds: 2), () => scanAndConnect());
               }
-              return; // Cihaz bulunduğunda döngüden çık
+              return;
             }
           }
         },
       );
 
-      fbp.FlutterBluePlus.cancelWhenScanComplete(
-          subscription); // Tarama bitince aboneliği iptal et
+      fbp.FlutterBluePlus.cancelWhenScanComplete(subscription);
       await fbp.FlutterBluePlus.startScan(
-        withNames: [
-          esp32DeviceName
-        ], // Sadece belirlediğimiz isimdeki cihazı tara
+        withNames: [esp32DeviceName],
         timeout: const Duration(seconds: 15),
       );
-      // Tarama bittikten sonra hala bağlı cihaz yoksa
       if (_connectedDevice == null) {
         _connectionStatusStreamController
             .add("Cihaz bulunamadı, tekrar deneniyor...");
-        Future.delayed(const Duration(seconds: 2),
-            () => scanAndConnect()); // Cihaz bulunamazsa tekrar dene
+        Future.delayed(const Duration(seconds: 2), () => scanAndConnect());
       }
     } catch (e) {
       if (kDebugMode) print("Tarama Hatası: $e");
       _connectionStatusStreamController.add("Tarama Hatası: $e");
-      // Hata durumunda tarama devam ediyorsa durdur
       if (await fbp.FlutterBluePlus.isScanning.first) {
-        // isScanning.value yerine await isScanning.first kullanıldı
         fbp.FlutterBluePlus.stopScan();
       }
     }
   }
 
-  // Bağlı cihazın servislerini ve karakteristiklerini keşfeder
   Future<void> _discoverServicesAndCharacteristics() async {
     if (_connectedDevice == null) {
       _connectionStatusStreamController.add("Hata: Bağlı cihaz yok.");
@@ -168,10 +155,11 @@ class BluetoothService {
             if (characteristic.uuid.toString() ==
                 characteristicUuidGpsDataString) {
               _gpsDataCharacteristic = characteristic;
-              // Notify veya Indicate özelliğini etkinleştir
               if (characteristic.properties.notify ||
                   characteristic.properties.indicate) {
                 await characteristic.setNotifyValue(true);
+                _gpsValueSubscription
+                    ?.cancel(); // Cancel previous subscription if any
                 _gpsValueSubscription =
                     characteristic.lastValueStream.listen((value) {
                   if (value.isNotEmpty) {
@@ -179,6 +167,17 @@ class BluetoothService {
                       String jsonString = utf8.decode(value);
                       if (kDebugMode) print("Alınan GPS JSON: $jsonString");
                       Map<String, dynamic> gpsData = json.decode(jsonString);
+
+                      // MODIFIED: Check for ESP32 emergency flag
+                      if (gpsData.containsKey('is_esp32_emergency') &&
+                          gpsData['is_esp32_emergency'] == true) {
+                        if (kDebugMode)
+                          print(
+                              "ESP32 Emergency Signal Received via GPS data characteristic!");
+                        // Send the whole GPS data packet through the emergency stream
+                        _esp32EmergencyTriggerController.add(gpsData);
+                      }
+                      // Always send the GPS data to the general GPS data stream
                       _gpsDataStreamController.add(gpsData);
                     } catch (e) {
                       if (kDebugMode)
@@ -202,22 +201,20 @@ class BluetoothService {
           }
         }
       }
-      // Eğer gerekli tüm karakteristikler bulunamadıysa bir uyarı ver
       if (_gpsDataCharacteristic == null || _commandCharacteristic == null) {
         _connectionStatusStreamController
             .add("Uyarı: Bazı karakteristikler bulunamadı.");
-        disconnectDevice(); // Eksik karakteristik varsa bağlantıyı kes ve tekrar dene
+        disconnectDevice();
       }
     } catch (e) {
       if (kDebugMode) print("Servis ve Karakteristik Keşif Hatası: $e");
       _connectionStatusStreamController.add("Hata: Servis/Karakteristik Keşfi");
-      disconnectDevice(); // Hata durumunda bağlantıyı kes
+      disconnectDevice();
     }
   }
 
-  // Cihazın bağlantı durumunu dinler (kopma, yeniden bağlanma vb.)
   void _listenToConnectionState() {
-    _connectionStateSubscription?.cancel(); // Önceki aboneliği iptal et
+    _connectionStateSubscription?.cancel();
     _connectionStateSubscription =
         _connectedDevice?.connectionState.listen((state) {
       if (kDebugMode) print("Bağlantı Durumu Değişti: $state");
@@ -226,24 +223,20 @@ class BluetoothService {
         _connectedDevice = null;
         _gpsDataCharacteristic = null;
         _commandCharacteristic = null;
-        _gpsValueSubscription?.cancel(); // GPS veri akışını da durdur
+        _gpsValueSubscription?.cancel();
         _gpsValueSubscription = null;
-        // Otomatik yeniden bağlanma:
         Future.delayed(const Duration(seconds: 2), () {
           if (!isConnected()) {
-            // Sadece gerçekten bağlı değilsek tekrar tara
             scanAndConnect();
           }
         });
       } else if (state == fbp.BluetoothConnectionState.connected) {
         _connectionStatusStreamController.add("Yeniden Bağlandı.");
-        // Bağlantı yeniden sağlandığında servisleri tekrar keşfet
         _discoverServicesAndCharacteristics();
       }
     });
   }
 
-  // ESP32'den GPS verisi isteği gönderir
   Future<void> requestGpsDataFromDevice() async {
     if (_connectedDevice == null || _commandCharacteristic == null) {
       _connectionStatusStreamController
@@ -260,7 +253,6 @@ class BluetoothService {
     }
   }
 
-  // ESP32'deki buzzer'ı açma/kapama komutu gönderir
   Future<void> toggleBuzzerOnDevice() async {
     if (_connectedDevice == null || _commandCharacteristic == null) {
       _connectionStatusStreamController
@@ -278,7 +270,6 @@ class BluetoothService {
     }
   }
 
-  // Bluetooth bağlantısını keser
   Future<void> disconnectDevice() async {
     if (_connectedDevice != null) {
       _connectionStatusStreamController.add("Bağlantı kesiliyor...");
@@ -304,23 +295,22 @@ class BluetoothService {
     }
   }
 
-  // Cihazın bağlı olup olmadığını kontrol eder
   bool isConnected() {
     return _connectedDevice != null && _connectedDevice!.isConnected;
   }
 
-  // StreamController'ları kapatır ve kaynakları serbest bırakır
   void dispose() {
     if (kDebugMode) print("BluetoothService dispose ediliyor.");
     _connectionStateSubscription?.cancel();
     _gpsValueSubscription?.cancel();
-    disconnectDevice(); // Kaynakları temizlemeden önce bağlantıyı kes
+    disconnectDevice();
     _gpsDataStreamController.close();
     _connectionStatusStreamController.close();
+    // ADDED: Close the new stream controller
+    _esp32EmergencyTriggerController.close();
   }
 }
 
-// Utility extension for List to find the first element or return null
 extension ListExtension<T> on List<T> {
   T? firstWhereOrNull(bool Function(T element) test) {
     for (var element in this) {

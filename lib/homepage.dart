@@ -6,9 +6,8 @@ import 'services.dart';
 import 'bluetooth_service.dart'; // Kendi BluetoothService'imiz
 import 'emergency_display_page.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'
-    show DocumentSnapshot, GeoPoint;
+    show DocumentSnapshot, GeoPoint; // Removed unused FieldValue
 import 'package:flutter/foundation.dart';
-// flutter_blue_plus paketini FlutterBluePlus ve BluetoothAdapterState için 'fbp' ön eki ile import ediyoruz
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 
 class HomePage extends StatefulWidget {
@@ -20,15 +19,16 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final EmergencyServices _emergencyServices = EmergencyServices();
-  final BluetoothService _bluetoothService =
-      BluetoothService(); // Kendi servisimiz
+  final BluetoothService _bluetoothService = BluetoothService();
   StreamSubscription? _gpsDataSubscription;
   StreamSubscription? _connectionStatusSubscription;
+  // ADDED: Subscription for ESP32 emergency trigger
+  StreamSubscription<Map<String, dynamic>>? _esp32EmergencySubscription;
 
   Map<String, dynamic>? _lastReceivedGpsData;
   String _bluetoothStatus = "Yükleniyor...";
   bool _isProcessingAction = false;
-  bool _isBuzzerOn = false; // Buzzer'ın anlık durumunu tutmak için
+  bool _isBuzzerOn = false;
 
   @override
   void initState() {
@@ -40,8 +40,6 @@ class _HomePageState extends State<HomePage> {
           _bluetoothStatus = status;
         });
         if (status.contains("Bağlandı") || status.contains("Cihaz hazır")) {
-          // Bağlantı sağlandığında ilk veri isteğini gönder
-          // Sadece _lastReceivedGpsData daha önce alınmadıysa veya boşsa iste
           if (_lastReceivedGpsData == null ||
               (_lastReceivedGpsData!['latitude'] == 0.0 &&
                   _lastReceivedGpsData!['longitude'] == 0.0)) {
@@ -55,12 +53,45 @@ class _HomePageState extends State<HomePage> {
       if (mounted) {
         setState(() {
           _lastReceivedGpsData = data;
-          _showSnackBar("ESP32'den yeni GPS verisi alındı.");
+          // Only show snackbar if it's not an ESP32 emergency signal (that one will have its own message)
+          if (data['is_esp32_emergency'] == null ||
+              data['is_esp32_emergency'] == false) {
+            _showSnackBar("ESP32'den yeni GPS verisi alındı.");
+          }
         });
+      } else {
+        _lastReceivedGpsData =
+            data; // Still update data if not mounted for background logic
       }
     });
 
-    // Uygulama ilk açıldığında Bluetooth bağlantı durumunu kontrol et
+    // ADDED: Listen to ESP32 emergency trigger
+    _esp32EmergencySubscription = _bluetoothService.esp32EmergencyTriggerStream
+        .listen((Map<String, dynamic> emergencyGpsData) async {
+      if (kDebugMode) {
+        print(
+            "ESP32 Emergency Signal Received in HomePage with data: $emergencyGpsData");
+      }
+      if (_isProcessingAction) {
+        if (kDebugMode)
+          print("Action already in progress. Ignoring ESP32 emergency signal.");
+        return;
+      }
+
+      // Update _lastReceivedGpsData with the data that came with the emergency signal
+      if (mounted) {
+        setState(() {
+          _lastReceivedGpsData = emergencyGpsData;
+        });
+      } else {
+        _lastReceivedGpsData = emergencyGpsData; // Update for background logic
+      }
+
+      _showSnackBar(
+          "ESP32 Acil Durum Butonu Sinyali Alındı! İşlem Başlatılıyor...");
+      await _handleEmergencyButtonPress(isFromEsp32Button: true);
+    });
+
     _checkBluetoothStateAndConnect();
   }
 
@@ -69,11 +100,13 @@ class _HomePageState extends State<HomePage> {
     if (state == fbp.BluetoothAdapterState.on) {
       _bluetoothService.scanAndConnect();
     } else {
-      setState(() {
+      if (mounted) {
+        setState(() {
+          _bluetoothStatus = "Bluetooth kapalı. Lütfen açın.";
+        });
+      } else {
         _bluetoothStatus = "Bluetooth kapalı. Lütfen açın.";
-      });
-      // Kullanıcıdan Bluetooth'u açmasını isteyebilirsiniz (Android 12+ için gerekli)
-      // await fbp.FlutterBluePlus.turnOn(); // Eğer otomatik açmak isterseniz fbp ile kullanın
+      }
     }
   }
 
@@ -81,12 +114,17 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _gpsDataSubscription?.cancel();
     _connectionStatusSubscription?.cancel();
-    _bluetoothService.dispose(); // Servisi temizle
+    _esp32EmergencySubscription?.cancel(); // ADDED: Cancel new subscription
+    _bluetoothService.dispose();
     super.dispose();
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
-    if (!mounted) return;
+    if (!mounted) {
+      if (kDebugMode)
+        print("Snackbar suppressed: HomePage not mounted. Message: $message");
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -96,13 +134,25 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _handleEmergencyButtonPress() async {
-    if (_isProcessingAction) return;
-    setState(() {
-      _isProcessingAction = true;
-    });
+  // MODIFIED: Added isFromEsp32Button parameter and guarded setState
+  Future<void> _handleEmergencyButtonPress(
+      {bool isFromEsp32Button = false}) async {
+    if (_isProcessingAction && !isFromEsp32Button)
+      return; // UI button can be blocked by _isProcessingAction
+
+    // For ESP32 button, _isProcessingAction is checked before calling this.
+    // Here, we ensure it's set for the duration of this function.
+    if (mounted) {
+      setState(() {
+        _isProcessingAction = true;
+      });
+    } else {
+      _isProcessingAction =
+          true; // Manage state for logic flow even if not mounted
+    }
 
     try {
+      // Use _lastReceivedGpsData which should have been updated by the GPS stream or ESP32 emergency stream
       if (!_bluetoothService.isConnected() ||
           _lastReceivedGpsData == null ||
           (_lastReceivedGpsData!['latitude'] == 0.0 &&
@@ -110,10 +160,11 @@ class _HomePageState extends State<HomePage> {
         _showSnackBar(
             'ESP32\'ye bağlanın veya geçerli veri almayı bekleyin. Tekrar deneniyor...',
             isError: true);
-        await _bluetoothService.scanAndConnect(); // Bağlantıyı tekrar dene
+        if (!_bluetoothService.isConnected()) {
+          await _bluetoothService.scanAndConnect(); // Bağlantıyı tekrar dene
+        }
         // Veri gelene kadar beklemek veya kullanıcıya bilgi vermek gerekebilir
-        await Future.delayed(
-            const Duration(seconds: 3)); // Bağlantı ve veri alımı için bekle
+        await Future.delayed(const Duration(seconds: 3));
         if (!_bluetoothService.isConnected() ||
             _lastReceivedGpsData == null ||
             (_lastReceivedGpsData!['latitude'] == 0.0 &&
@@ -128,9 +179,10 @@ class _HomePageState extends State<HomePage> {
       double longitude = _lastReceivedGpsData?['longitude'] ?? 0.0;
       int satellites = _lastReceivedGpsData?['satellites'] ?? 0;
 
-      String dataSource = "ESP32";
+      // MODIFIED: More specific data source
+      String dataSource =
+          isFromEsp32Button ? "ESP32_Button" : "Mobile_App_Button";
 
-      // ESP32'den geçerli veri yoksa (0,0 koordinatları veya uydu sayısı düşükse) mobil cihazın konumunu kullan
       if ((latitude == 0.0 && longitude == 0.0) || satellites < 4) {
         _showSnackBar(
             'ESP32\'den geçerli GPS verisi alınamadı (uydu sayısı düşük veya konum 0,0). Mobil konum kullanılıyor.',
@@ -139,8 +191,11 @@ class _HomePageState extends State<HomePage> {
             await _emergencyServices.getMobileDeviceCurrentLocation();
         latitude = mobilePosition.latitude;
         longitude = mobilePosition.longitude;
-        satellites = 0; // Mobil konumdan uydu sayısı gelmez
-        dataSource = "Mobile";
+        satellites = 0;
+        // MODIFIED: More specific data source for fallback
+        dataSource = isFromEsp32Button
+            ? "ESP32_Button_Mobile_Fallback"
+            : "Mobile_App_Button_Mobile_Fallback";
       }
 
       _showSnackBar('En yakın toplanma alanı hesaplanıyor...');
@@ -152,17 +207,18 @@ class _HomePageState extends State<HomePage> {
           await _emergencyServices.saveEmergencyLocation(
         latitude: latitude,
         longitude: longitude,
-        esp32NearestAreaName: nearestAreaInfo['name'], // Güncellendi
-        esp32DistanceToAreaM: double.tryParse(nearestAreaInfo['distance_m']),
-        // Yön bilgisi için ek hesaplama gerekebilir. Basit bir placeholder şimdilik.
-        esp32DirectionToArea:
-            "Bilinmiyor", // Todo: Gerçek yön hesaplaması eklenecek
+        esp32NearestAreaName: nearestAreaInfo['name'],
+        esp32DistanceToAreaM: double.tryParse(nearestAreaInfo['distance_m']
+            .toString()), // Ensure string then parse
+        esp32DirectionToArea: "Bilinmiyor",
         esp32Satellites: satellites,
-        source: "${dataSource}_Acil_Buton",
+        // MODIFIED: Use the determined dataSource directly
+        source: dataSource,
       );
 
       _showSnackBar('Acil durum başarıyla kaydedildi!');
       if (mounted) {
+        // Navigation only if mounted
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -170,22 +226,34 @@ class _HomePageState extends State<HomePage> {
                 EmergencyDisplayPage(emergencyDataSnapshot: doc),
           ),
         );
+      } else {
+        if (kDebugMode)
+          print(
+              "Emergency data saved. HomePage not mounted, skipping navigation to EmergencyDisplayPage.");
+        // Potentially trigger a local notification here if app is in background
       }
     } catch (e) {
       _showSnackBar('Hata: ${e.toString()}', isError: true);
       if (kDebugMode) print("Acil durum hatası: $e");
     } finally {
-      setState(() {
-        _isProcessingAction = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isProcessingAction = false;
+        });
+      } else {
+        _isProcessingAction = false; // Reset state
+      }
     }
   }
 
   Future<void> _handleFindRendezvousArea() async {
     if (_isProcessingAction) return;
-    setState(() {
+    if (mounted)
+      setState(() {
+        _isProcessingAction = true;
+      });
+    else
       _isProcessingAction = true;
-    });
 
     try {
       if (!_bluetoothService.isConnected() ||
@@ -195,16 +263,22 @@ class _HomePageState extends State<HomePage> {
         _showSnackBar(
             'ESP32\'ye bağlanın veya geçerli veri almayı bekleyin. Tekrar deneniyor...',
             isError: true);
-        await _bluetoothService.scanAndConnect();
-        await Future.delayed(
-            const Duration(seconds: 3)); // Bağlantı ve veri alımı için bekle
+        if (!_bluetoothService.isConnected())
+          await _bluetoothService.scanAndConnect();
+        await Future.delayed(const Duration(seconds: 3));
         if (!_bluetoothService.isConnected() ||
             _lastReceivedGpsData == null ||
             (_lastReceivedGpsData!['latitude'] == 0.0 &&
                 _lastReceivedGpsData!['longitude'] == 0.0)) {
           _showSnackBar("ESP32'den geçerli veri alınamadı, işlem iptal.",
               isError: true);
-          return; // Geçerli veri yoksa işlemi durdur
+          if (mounted)
+            setState(() {
+              _isProcessingAction = false;
+            });
+          else
+            _isProcessingAction = false;
+          return;
         }
       }
 
@@ -216,7 +290,13 @@ class _HomePageState extends State<HomePage> {
         _showSnackBar(
             'ESP32\'den geçerli GPS verisi alınamadı (uydu sayısı düşük veya konum 0,0). İşlem iptal edildi.',
             isError: true);
-        return; // Geçerli veri yoksa işlemi durdur
+        if (mounted)
+          setState(() {
+            _isProcessingAction = false;
+          });
+        else
+          _isProcessingAction = false;
+        return;
       }
 
       _showSnackBar('En yakın toplanma alanı bulunuyor...');
@@ -224,6 +304,7 @@ class _HomePageState extends State<HomePage> {
           .findNearestRendezvousArea(latitude, longitude);
 
       if (mounted) {
+        // Dialog only if mounted
         showDialog(
           context: context,
           builder: (BuildContext context) {
@@ -233,8 +314,7 @@ class _HomePageState extends State<HomePage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                      'Adı: ${nearestAreaInfo['name'] ?? 'Bilinmiyor'}'), // Güncellendi
+                  Text('Adı: ${nearestAreaInfo['name'] ?? 'Bilinmiyor'}'),
                   Text(
                       'Koordinatlar: ${nearestAreaInfo['coordinates']?.latitude.toStringAsFixed(6)}, ${nearestAreaInfo['coordinates']?.longitude.toStringAsFixed(6)}'),
                   Text('Mesafe: ${nearestAreaInfo['distance_m']} metre'),
@@ -254,9 +334,8 @@ class _HomePageState extends State<HomePage> {
                     final lat = nearestAreaInfo['coordinates']?.latitude;
                     final lng = nearestAreaInfo['coordinates']?.longitude;
                     if (lat != null && lng != null) {
-                      // Google Haritalar için genel URL yapısı
                       final url =
-                          'http://maps.google.com/maps?q=$lat,$lng'; // Direkt koordinat ile açma
+                          'https://www.google.com/maps/search/?api=1&query=$lat,$lng'; // More reliable maps URL
                       final uri = Uri.parse(url);
                       if (await canLaunchUrl(uri)) {
                         await launchUrl(uri,
@@ -281,9 +360,12 @@ class _HomePageState extends State<HomePage> {
       _showSnackBar('Hata: ${e.toString()}', isError: true);
       if (kDebugMode) print("Toplanma alanı hatası: $e");
     } finally {
-      setState(() {
+      if (mounted)
+        setState(() {
+          _isProcessingAction = false;
+        });
+      else
         _isProcessingAction = false;
-      });
     }
   }
 
@@ -292,9 +374,13 @@ class _HomePageState extends State<HomePage> {
       _showSnackBar('Zaten bağlı.');
       return;
     }
-    setState(() {
+    if (mounted) {
+      setState(() {
+        _bluetoothStatus = "Bağlanmaya çalışılıyor...";
+      });
+    } else {
       _bluetoothStatus = "Bağlanmaya çalışılıyor...";
-    });
+    }
     await _bluetoothService.scanAndConnect();
   }
 
@@ -306,7 +392,6 @@ class _HomePageState extends State<HomePage> {
     final baseButtonWidth = screenWidth * 0.8;
     final baseButtonHeight = screenHeight * 0.12;
 
-    // Küçük ekranlarda butonların çok büyük olmaması için minimum/maksimum boyutlar
     final finalButtonWidth = baseButtonWidth.clamp(280.0, 400.0);
     final finalButtonHeight = baseButtonHeight.clamp(70.0, 100.0);
 
@@ -322,7 +407,6 @@ class _HomePageState extends State<HomePage> {
                     ? Colors.greenAccent
                     : Colors.redAccent),
             onPressed: () {
-              // Bluetooth bağlantı durumu bilgisi gösterme veya manuel bağlanma/kesme denemesi
               if (_bluetoothService.isConnected()) {
                 _showSnackBar('Bluetooth bağlı: Bağlantı kesiliyor...');
                 _bluetoothService.disconnectDevice();
@@ -346,27 +430,30 @@ class _HomePageState extends State<HomePage> {
             end: Alignment.bottomCenter,
           ),
         ),
-        // BURADAKİ DÜZELTME: Column'u SingleChildScrollView ile sarmak
         child: SafeArea(
           child: SingleChildScrollView(
-            // <-- Eklenen widget
             child: Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    'Sistem Durumu: $_bluetoothStatus',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: _bluetoothStatus.contains("Bağlandı") ||
-                              _bluetoothStatus.contains("Cihaz hazır")
-                          ? Colors.green[800]
-                          : Colors.red[800],
+                  Padding(
+                    // Added padding for better visibility
+                    padding: const EdgeInsets.all(8.0),
+                    child: Text(
+                      'Sistem Durumu: $_bluetoothStatus',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: _bluetoothStatus.contains("Bağlandı") ||
+                                _bluetoothStatus.contains("Cihaz hazır")
+                            ? Colors.lightGreenAccent[700] // Brighter green
+                            : Colors.redAccent[700], // Brighter red
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    textAlign: TextAlign.center,
                   ),
-                  SizedBox(height: screenHeight * 0.03),
+                  SizedBox(
+                      height: screenHeight * 0.02), // Reduced spacing a bit
                   Card(
                     margin: const EdgeInsets.symmetric(horizontal: 20),
                     elevation: 8,
@@ -405,6 +492,12 @@ class _HomePageState extends State<HomePage> {
                                         'Yön (deg): ${_lastReceivedGpsData!['course_deg']?.toStringAsFixed(2) ?? 'N/A'}'),
                                     Text(
                                         'Hız (km/s): ${_lastReceivedGpsData!['speed_kmph']?.toStringAsFixed(2) ?? 'N/A'}'),
+                                    if (_lastReceivedGpsData![
+                                            'is_esp32_emergency'] ==
+                                        true)
+                                      const Text('Sinyal: ESP32 Acil Butonu',
+                                          style: TextStyle(
+                                              color: Colors.orangeAccent)),
                                   ],
                                 )
                               : const Text(
@@ -413,18 +506,21 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   ),
-                  SizedBox(height: screenHeight * 0.05),
+                  SizedBox(height: screenHeight * 0.04), // Adjusted spacing
                   SizedBox(
                     width: finalButtonWidth,
                     height: finalButtonHeight,
                     child: ElevatedButton.icon(
+                      // MODIFIED: Call _handleEmergencyButtonPress without parameter (default is false)
                       onPressed: _isProcessingAction
                           ? null
-                          : _handleEmergencyButtonPress,
+                          : () => _handleEmergencyButtonPress(),
                       icon: Icon(Icons.warning_amber_rounded,
                           size: finalButtonHeight * 0.4),
                       label: Text('ACİL DURUM KONUMU KAYDET',
-                          style: TextStyle(fontSize: finalButtonHeight * 0.25)),
+                          style: TextStyle(
+                              fontSize: finalButtonHeight *
+                                  0.22)), // Slightly smaller text
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.red[700],
                         foregroundColor: Colors.white,
@@ -447,7 +543,9 @@ class _HomePageState extends State<HomePage> {
                       icon: Icon(Icons.meeting_room_outlined,
                           size: finalButtonHeight * 0.4),
                       label: Text('TOPLANMA ALANI BUL',
-                          style: TextStyle(fontSize: finalButtonHeight * 0.25)),
+                          style: TextStyle(
+                              fontSize: finalButtonHeight *
+                                  0.22)), // Slightly smaller text
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green[700],
                         foregroundColor: Colors.white,
@@ -462,7 +560,7 @@ class _HomePageState extends State<HomePage> {
                   SizedBox(height: screenHeight * 0.025),
                   SizedBox(
                     width: finalButtonWidth,
-                    height: finalButtonHeight,
+                    height: finalButtonHeight * 0.8, // Smaller button
                     child: ElevatedButton.icon(
                       onPressed: _isProcessingAction
                           ? null
@@ -479,17 +577,21 @@ class _HomePageState extends State<HomePage> {
                                   'ESP32\'den veri isteği gönderildi.');
                             },
                       icon: Icon(Icons.refresh_rounded,
-                          size: finalButtonHeight * 0.4),
+                          size: finalButtonHeight * 0.3),
                       label: Text('ESP32 Veri Yenile',
-                          style: TextStyle(fontSize: finalButtonHeight * 0.3)),
+                          style: TextStyle(fontSize: finalButtonHeight * 0.22)),
                       style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blueGrey[600]),
+                        backgroundColor: Colors.blueGrey[600],
+                        foregroundColor: Colors.white, // Added for consistency
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
                     ),
                   ),
                   SizedBox(height: screenHeight * 0.025),
                   SizedBox(
                     width: finalButtonWidth,
-                    height: finalButtonHeight,
+                    height: finalButtonHeight * 0.8, // Smaller button
                     child: ElevatedButton.icon(
                       onPressed: _isProcessingAction
                           ? null
@@ -502,28 +604,37 @@ class _HomePageState extends State<HomePage> {
                                 return;
                               }
                               await _bluetoothService.toggleBuzzerOnDevice();
-                              setState(() {
-                                _isBuzzerOn =
-                                    !_isBuzzerOn; // Durumu tersine çevir
-                              });
-                              _showSnackBar(_isBuzzerOn
-                                  ? 'Buzzer Açıldı'
-                                  : 'Buzzer Kapatıldı');
+                              // Buzzer state on ESP32 is the source of truth.
+                              // We don't reliably know its state to toggle _isBuzzerOn perfectly here.
+                              // We'll assume the command worked and show a generic message.
+                              // For a more robust UI, ESP32 could send its buzzer state back.
+                              _showSnackBar(
+                                  'Buzzer komutu ESP32\'ye gönderildi.');
+                              // To reflect a change immediately, you might want to get buzzer state from ESP32
+                              // or optimistically toggle it, but that can get out of sync.
+                              // For now, we remove the local _isBuzzerOn toggle based on command sent.
+                              // setState(() { _isBuzzerOn = !_isBuzzerOn; });
                             },
                       icon: Icon(
+                          // Since we don't track ESP32's buzzer state reliably in Flutter app state from this action alone:
+                          // Using a neutral or action-implying icon.
+                          // Or, if you want to keep the toggle appearance:
                           _isBuzzerOn
                               ? Icons.volume_up_rounded
-                              : Icons.volume_off_rounded,
-                          size: finalButtonHeight * 0.4),
-                      label: Text(_isBuzzerOn ? 'Buzzer Kapat' : 'Buzzer Aç',
-                          style: TextStyle(fontSize: finalButtonHeight * 0.3)),
+                              : Icons
+                                  .volume_off_rounded, // This will be based on Flutter's potentially out-of-sync state
+                          size: finalButtonHeight * 0.3),
+                      label: Text('Buzzer Aç/Kapat', // Generic label
+                          style: TextStyle(fontSize: finalButtonHeight * 0.22)),
                       style: ElevatedButton.styleFrom(
-                          backgroundColor: _isBuzzerOn
-                              ? Colors.orange[800]
-                              : Colors.grey[600]),
+                        backgroundColor: Colors.orange[700], // Consistent color
+                        foregroundColor: Colors.white, // Added for consistency
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
                     ),
                   ),
-                  SizedBox(height: screenHeight * 0.025), // En alttaki boşluk
+                  SizedBox(height: screenHeight * 0.03),
                 ],
               ),
             ),
