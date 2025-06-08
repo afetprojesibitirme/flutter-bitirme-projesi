@@ -9,6 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart'
     show DocumentSnapshot, GeoPoint; // Removed unused FieldValue
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
+import 'navbar.dart'; // Added NavBar import
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -202,6 +203,15 @@ class _HomePageState extends State<HomePage> {
       final nearestAreaInfo = await _emergencyServices
           .findNearestRendezvousArea(latitude, longitude);
 
+      // Null check for coordinates before saving
+      final coordinates = nearestAreaInfo['coordinates'];
+      double? areaLat;
+      double? areaLng;
+      if (coordinates != null) {
+        areaLat = coordinates.latitude;
+        areaLng = coordinates.longitude;
+      }
+
       _showSnackBar('Acil durum konumu kaydediliyor...');
       final DocumentSnapshot doc =
           await _emergencyServices.saveEmergencyLocation(
@@ -256,58 +266,39 @@ class _HomePageState extends State<HomePage> {
       _isProcessingAction = true;
 
     try {
-      if (!_bluetoothService.isConnected() ||
-          _lastReceivedGpsData == null ||
-          (_lastReceivedGpsData!['latitude'] == 0.0 &&
-              _lastReceivedGpsData!['longitude'] == 0.0)) {
-        _showSnackBar(
-            'ESP32\'ye bağlanın veya geçerli veri almayı bekleyin. Tekrar deneniyor...',
-            isError: true);
-        if (!_bluetoothService.isConnected())
-          await _bluetoothService.scanAndConnect();
-        await Future.delayed(const Duration(seconds: 3));
-        if (!_bluetoothService.isConnected() ||
-            _lastReceivedGpsData == null ||
-            (_lastReceivedGpsData!['latitude'] == 0.0 &&
-                _lastReceivedGpsData!['longitude'] == 0.0)) {
-          _showSnackBar("ESP32'den geçerli veri alınamadı, işlem iptal.",
-              isError: true);
-          if (mounted)
-            setState(() {
-              _isProcessingAction = false;
-            });
-          else
-            _isProcessingAction = false;
-          return;
-        }
-      }
+      double latitude = 0.0;
+      double longitude = 0.0;
+      int satellites = 0;
 
-      double latitude = _lastReceivedGpsData!['latitude'] ?? 0.0;
-      double longitude = _lastReceivedGpsData!['longitude'] ?? 0.0;
-      int satellites = _lastReceivedGpsData!['satellites'] ?? 0;
-
-      if ((latitude == 0.0 && longitude == 0.0) || satellites < 4) {
-        _showSnackBar(
-            'ESP32\'den geçerli GPS verisi alınamadı (uydu sayısı düşük veya konum 0,0). İşlem iptal edildi.',
-            isError: true);
-        if (mounted)
-          setState(() {
-            _isProcessingAction = false;
-          });
-        else
-          _isProcessingAction = false;
-        return;
+      // Try to get ESP32 data
+      if (_bluetoothService.isConnected() &&
+          _lastReceivedGpsData != null &&
+          (_lastReceivedGpsData!['latitude'] != 0.0 ||
+              _lastReceivedGpsData!['longitude'] != 0.0) &&
+          (_lastReceivedGpsData!['satellites'] ?? 0) >= 4) {
+        latitude = _lastReceivedGpsData!['latitude'] ?? 0.0;
+        longitude = _lastReceivedGpsData!['longitude'] ?? 0.0;
+        satellites = _lastReceivedGpsData!['satellites'] ?? 0;
+      } else {
+        // Fallback to phone location
+        _showSnackBar("ESP32'den geçerli veri alınamadı, telefon konumu kullanılıyor.", isError: true);
+        final mobilePosition = await _emergencyServices.getMobileDeviceCurrentLocation();
+        latitude = mobilePosition.latitude;
+        longitude = mobilePosition.longitude;
+        satellites = 0;
       }
 
       _showSnackBar('En yakın toplanma alanı bulunuyor...');
-      final nearestAreaInfo = await _emergencyServices
-          .findNearestRendezvousArea(latitude, longitude);
+      final nearestAreaInfo = await _emergencyServices.findNearestRendezvousArea(latitude, longitude);
 
       if (mounted) {
         // Dialog only if mounted
         showDialog(
           context: context,
           builder: (BuildContext context) {
+            final coordinates = nearestAreaInfo['coordinates'];
+            String latStr = coordinates != null ? coordinates.latitude.toStringAsFixed(6) : 'N/A';
+            String lngStr = coordinates != null ? coordinates.longitude.toStringAsFixed(6) : 'N/A';
             return AlertDialog(
               title: const Text('En Yakın Toplanma Alanı'),
               content: Column(
@@ -315,8 +306,7 @@ class _HomePageState extends State<HomePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Adı: ${nearestAreaInfo['name'] ?? 'Bilinmiyor'}'),
-                  Text(
-                      'Koordinatlar: ${nearestAreaInfo['coordinates']?.latitude.toStringAsFixed(6)}, ${nearestAreaInfo['coordinates']?.longitude.toStringAsFixed(6)}'),
+                  Text('Koordinatlar: $latStr, $lngStr'),
                   Text('Mesafe: ${nearestAreaInfo['distance_m']} metre'),
                   Text('Mesafe: ${nearestAreaInfo['distance_km']} km'),
                 ],
@@ -331,8 +321,8 @@ class _HomePageState extends State<HomePage> {
                 TextButton(
                   onPressed: () async {
                     Navigator.of(context).pop();
-                    final lat = nearestAreaInfo['coordinates']?.latitude;
-                    final lng = nearestAreaInfo['coordinates']?.longitude;
+                    final lat = coordinates != null ? coordinates.latitude : null;
+                    final lng = coordinates != null ? coordinates.longitude : null;
                     if (lat != null && lng != null) {
                       final url =
                           'https://www.google.com/maps/search/?api=1&query=$lat,$lng'; // More reliable maps URL
@@ -396,65 +386,17 @@ class _HomePageState extends State<HomePage> {
     final finalButtonHeight = baseButtonHeight.clamp(70.0, 100.0);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Acil Durum Yönetimi'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.bluetooth,
-                color: _bluetoothService.isConnected()
-                    ? Colors.greenAccent
-                    : Colors.redAccent),
-            onPressed: () {
-              if (_bluetoothService.isConnected()) {
-                _showSnackBar('Bluetooth bağlı: Bağlantı kesiliyor...');
-                _bluetoothService.disconnectDevice();
-              } else {
-                _showSnackBar(
-                    'Bluetooth bağlı değil: Bağlanmaya çalışılıyor...');
-                _tryToConnectBluetooth();
-              }
-            },
-          ),
-        ],
-      ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Theme.of(context).colorScheme.primary.withOpacity(0.8),
-              Theme.of(context).colorScheme.background
-            ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Padding(
-                    // Added padding for better visibility
-                    padding: const EdgeInsets.all(8.0),
-                    child: Text(
-                      'Sistem Durumu: $_bluetoothStatus',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: _bluetoothStatus.contains("Bağlandı") ||
-                                _bluetoothStatus.contains("Cihaz hazır")
-                            ? Colors.lightGreenAccent[700] // Brighter green
-                            : Colors.redAccent[700], // Brighter red
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  SizedBox(
-                      height: screenHeight * 0.02), // Reduced spacing a bit
-                  Card(
+      backgroundColor: Colors.white12,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Padding(
+                  // Added padding for better visibility
+                  padding: const EdgeInsets.all(8.0),
+                  child: Card(
                     margin: const EdgeInsets.symmetric(horizontal: 20),
                     elevation: 8,
                     shape: RoundedRectangleBorder(
@@ -466,7 +408,7 @@ class _HomePageState extends State<HomePage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Son GPS Verisi (ESP32):',
+                            'Sistem Durumu:',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -474,173 +416,202 @@ class _HomePageState extends State<HomePage> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          _lastReceivedGpsData != null &&
-                                  (_lastReceivedGpsData!['latitude'] != 0.0 ||
-                                      _lastReceivedGpsData!['longitude'] != 0.0)
-                              ? Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                        'Enlem: ${_lastReceivedGpsData!['latitude']?.toStringAsFixed(6) ?? 'N/A'}'),
-                                    Text(
-                                        'Boylam: ${_lastReceivedGpsData!['longitude']?.toStringAsFixed(6) ?? 'N/A'}'),
-                                    Text(
-                                        'Uydu Sayısı: ${_lastReceivedGpsData!['satellites']?.toString() ?? 'N/A'}'),
-                                    Text(
-                                        'Rakım (m): ${_lastReceivedGpsData!['altitude_m']?.toStringAsFixed(2) ?? 'N/A'}'),
-                                    Text(
-                                        'Yön (deg): ${_lastReceivedGpsData!['course_deg']?.toStringAsFixed(2) ?? 'N/A'}'),
-                                    Text(
-                                        'Hız (km/s): ${_lastReceivedGpsData!['speed_kmph']?.toStringAsFixed(2) ?? 'N/A'}'),
-                                    if (_lastReceivedGpsData![
-                                            'is_esp32_emergency'] ==
-                                        true)
-                                      const Text('Sinyal: ESP32 Acil Butonu',
-                                          style: TextStyle(
-                                              color: Colors.orangeAccent)),
-                                  ],
-                                )
-                              : const Text(
-                                  'Veri bekleniyor veya geçerli değil...'),
+                          Text(
+                            _bluetoothStatus,
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: _bluetoothStatus.contains("Bağlandı") ||
+                                      _bluetoothStatus.contains("Cihaz hazır")
+                                  ? Colors.lightGreenAccent[700]
+                                  : Colors.redAccent[700],
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ],
                       ),
                     ),
                   ),
-                  SizedBox(height: screenHeight * 0.04), // Adjusted spacing
-                  SizedBox(
-                    width: finalButtonWidth,
-                    height: finalButtonHeight,
-                    child: ElevatedButton.icon(
-                      // MODIFIED: Call _handleEmergencyButtonPress without parameter (default is false)
-                      onPressed: _isProcessingAction
-                          ? null
-                          : () => _handleEmergencyButtonPress(),
-                      icon: Icon(Icons.warning_amber_rounded,
-                          size: finalButtonHeight * 0.4),
-                      label: Text('ACİL DURUM KONUMU KAYDET',
+                ),
+                SizedBox(height: screenHeight * 0.02),
+                Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 20),
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Son GPS Verisi (ESP32):',
                           style: TextStyle(
-                              fontSize: finalButtonHeight *
-                                  0.22)), // Slightly smaller text
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red[700],
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
                         ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 15),
-                      ),
+                        const SizedBox(height: 10),
+                        _lastReceivedGpsData != null &&
+                                (_lastReceivedGpsData!['latitude'] != 0.0 ||
+                                    _lastReceivedGpsData!['longitude'] != 0.0)
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                      'Enlem: ${_lastReceivedGpsData!['latitude']?.toStringAsFixed(6) ?? 'N/A'}'),
+                                  Text(
+                                      'Boylam: ${_lastReceivedGpsData!['longitude']?.toStringAsFixed(6) ?? 'N/A'}'),
+                                  Text(
+                                      'Uydu Sayısı: ${_lastReceivedGpsData!['satellites']?.toString() ?? 'N/A'}'),
+                                  Text(
+                                      'Rakım (m): ${_lastReceivedGpsData!['altitude_m']?.toStringAsFixed(2) ?? 'N/A'}'),
+                                  Text(
+                                      'Yön (deg): ${_lastReceivedGpsData!['course_deg']?.toStringAsFixed(2) ?? 'N/A'}'),
+                                  Text(
+                                      'Hız (km/s): ${_lastReceivedGpsData!['speed_kmph']?.toStringAsFixed(2) ?? 'N/A'}'),
+                                  if (_lastReceivedGpsData!['is_esp32_emergency'] ==
+                                      true)
+                                    const Text('Sinyal: ESP32 Acil Butonu',
+                                        style: TextStyle(
+                                            color: Colors.orangeAccent)),
+                                ],
+                              )
+                            : const Text(
+                                'Veri bekleniyor veya geçerli değil...'),
+                      ],
                     ),
                   ),
-                  SizedBox(height: screenHeight * 0.025),
-                  SizedBox(
-                    width: finalButtonWidth,
-                    height: finalButtonHeight,
-                    child: ElevatedButton.icon(
-                      onPressed: _isProcessingAction
-                          ? null
-                          : _handleFindRendezvousArea,
-                      icon: Icon(Icons.meeting_room_outlined,
-                          size: finalButtonHeight * 0.4),
-                      label: Text('TOPLANMA ALANI BUL',
-                          style: TextStyle(
-                              fontSize: finalButtonHeight *
-                                  0.22)), // Slightly smaller text
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green[700],
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 15),
+                ),
+                SizedBox(height: screenHeight * 0.04), // Adjusted spacing
+                SizedBox(
+                  width: finalButtonWidth,
+                  height: finalButtonHeight,
+                  child: ElevatedButton.icon(
+                    onPressed: _isProcessingAction
+                        ? () {} // Empty function instead of null
+                        : () => _handleEmergencyButtonPress(),
+                    icon: Icon(Icons.warning_amber_rounded,
+                        size: finalButtonHeight * 0.4),
+                    label: Text('ACİL DURUM KONUMU KAYDET',
+                        style: TextStyle(
+                            fontSize: finalButtonHeight * 0.22)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isProcessingAction 
+                          ? Colors.red[700]?.withOpacity(0.5)
+                          : Colors.red[700],
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 15),
                     ),
                   ),
-                  SizedBox(height: screenHeight * 0.025),
-                  SizedBox(
-                    width: finalButtonWidth,
-                    height: finalButtonHeight * 0.8, // Smaller button
-                    child: ElevatedButton.icon(
-                      onPressed: _isProcessingAction
-                          ? null
-                          : () {
-                              if (!_bluetoothService.isConnected()) {
-                                _showSnackBar(
-                                    'Önce ESP32\'ye bağlanın veya bağlantıyı bekleyin.',
-                                    isError: true);
-                                _tryToConnectBluetooth();
-                                return;
-                              }
-                              _bluetoothService.requestGpsDataFromDevice();
+                ),
+                SizedBox(height: screenHeight * 0.025),
+                SizedBox(
+                  width: finalButtonWidth,
+                  height: finalButtonHeight,
+                  child: ElevatedButton.icon(
+                    onPressed: _isProcessingAction
+                        ? () {} // Empty function instead of null
+                        : _handleFindRendezvousArea,
+                    icon: Icon(Icons.meeting_room_outlined,
+                        size: finalButtonHeight * 0.4),
+                    label: Text('TOPLANMA ALANI BUL',
+                        style: TextStyle(
+                            fontSize: finalButtonHeight * 0.22)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isProcessingAction 
+                          ? Colors.green[700]?.withOpacity(0.5)
+                          : Colors.green[700],
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 15),
+                    ),
+                  ),
+                ),
+                SizedBox(height: screenHeight * 0.025),
+                SizedBox(
+                  width: finalButtonWidth,
+                  height: finalButtonHeight * 0.8,
+                  child: ElevatedButton.icon(
+                    onPressed: _isProcessingAction
+                        ? () {} // Empty function instead of null
+                        : () {
+                            if (!_bluetoothService.isConnected()) {
                               _showSnackBar(
-                                  'ESP32\'den veri isteği gönderildi.');
-                            },
-                      icon: Icon(Icons.refresh_rounded,
-                          size: finalButtonHeight * 0.3),
-                      label: Text('ESP32 Veri Yenile',
-                          style: TextStyle(fontSize: finalButtonHeight * 0.22)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blueGrey[600],
-                        foregroundColor: Colors.white, // Added for consistency
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                      ),
+                                  'Önce ESP32\'ye bağlanın veya bağlantıyı bekleyin.',
+                                  isError: true);
+                              _tryToConnectBluetooth();
+                              return;
+                            }
+                            _bluetoothService.requestGpsDataFromDevice();
+                            _showSnackBar(
+                                'ESP32\'den veri isteği gönderildi.');
+                          },
+                    icon: Icon(Icons.refresh_rounded,
+                        size: finalButtonHeight * 0.3),
+                    label: Text('ESP32 Veri Yenile',
+                        style: TextStyle(fontSize: finalButtonHeight * 0.22)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isProcessingAction 
+                          ? Colors.blueGrey[600]?.withOpacity(0.5)
+                          : Colors.blueGrey[600],
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
-                  SizedBox(height: screenHeight * 0.025),
-                  SizedBox(
-                    width: finalButtonWidth,
-                    height: finalButtonHeight * 0.8, // Smaller button
-                    child: ElevatedButton.icon(
-                      onPressed: _isProcessingAction
-                          ? null
-                          : () async {
-                              if (!_bluetoothService.isConnected()) {
-                                _showSnackBar(
-                                    'Önce ESP32\'ye bağlanın veya bağlantıyı bekleyin.',
-                                    isError: true);
-                                _tryToConnectBluetooth();
-                                return;
-                              }
-                              await _bluetoothService.toggleBuzzerOnDevice();
-                              // Buzzer state on ESP32 is the source of truth.
-                              // We don't reliably know its state to toggle _isBuzzerOn perfectly here.
-                              // We'll assume the command worked and show a generic message.
-                              // For a more robust UI, ESP32 could send its buzzer state back.
+                ),
+                SizedBox(height: screenHeight * 0.025),
+                SizedBox(
+                  width: finalButtonWidth,
+                  height: finalButtonHeight * 0.8,
+                  child: ElevatedButton.icon(
+                    onPressed: _isProcessingAction
+                        ? () {} // Empty function instead of null
+                        : () async {
+                            if (!_bluetoothService.isConnected()) {
                               _showSnackBar(
-                                  'Buzzer komutu ESP32\'ye gönderildi.');
-                              // To reflect a change immediately, you might want to get buzzer state from ESP32
-                              // or optimistically toggle it, but that can get out of sync.
-                              // For now, we remove the local _isBuzzerOn toggle based on command sent.
-                              // setState(() { _isBuzzerOn = !_isBuzzerOn; });
-                            },
-                      icon: Icon(
-                          // Since we don't track ESP32's buzzer state reliably in Flutter app state from this action alone:
-                          // Using a neutral or action-implying icon.
-                          // Or, if you want to keep the toggle appearance:
-                          _isBuzzerOn
-                              ? Icons.volume_up_rounded
-                              : Icons
-                                  .volume_off_rounded, // This will be based on Flutter's potentially out-of-sync state
-                          size: finalButtonHeight * 0.3),
-                      label: Text('Buzzer Aç/Kapat', // Generic label
-                          style: TextStyle(fontSize: finalButtonHeight * 0.22)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange[700], // Consistent color
-                        foregroundColor: Colors.white, // Added for consistency
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                      ),
+                                  'Önce ESP32\'ye bağlanın veya bağlantıyı bekleyin.',
+                                  isError: true);
+                              _tryToConnectBluetooth();
+                              return;
+                            }
+                            await _bluetoothService.toggleBuzzerOnDevice();
+                            _showSnackBar(
+                                'Buzzer komutu ESP32\'ye gönderildi.');
+                          },
+                    icon: Icon(
+                        _isBuzzerOn
+                            ? Icons.volume_up_rounded
+                            : Icons.volume_off_rounded,
+                        size: finalButtonHeight * 0.3),
+                    label: Text('Buzzer Aç/Kapat',
+                        style: TextStyle(fontSize: finalButtonHeight * 0.22)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isProcessingAction 
+                          ? Colors.orange[700]?.withOpacity(0.5)
+                          : Colors.orange[700],
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
-                  SizedBox(height: screenHeight * 0.03),
-                ],
-              ),
+                ),
+                SizedBox(height: screenHeight * 0.03),
+              ],
             ),
           ),
         ),
       ),
+      bottomNavigationBar: const NavBar(selectedIndex: 1),
     );
   }
 }
