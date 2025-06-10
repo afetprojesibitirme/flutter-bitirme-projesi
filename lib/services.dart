@@ -50,8 +50,7 @@ class EmergencyServices {
     try {
       DocumentReference docRef =
           await _firestore.collection('emergency_locations').add({
-        'latitude': latitude,
-        'longitude': longitude,
+        'location': GeoPoint(latitude, longitude),
         'timestamp': FieldValue.serverTimestamp(),
         'esp32_nearest_area_name': esp32NearestAreaName,
         'esp32_distance_to_area_m': esp32DistanceToAreaM,

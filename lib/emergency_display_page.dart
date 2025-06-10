@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/foundation.dart'; // kDebugMode için eklendi
+import 'navbar.dart'; // Added NavBar import
 
 class EmergencyDisplayPage extends StatelessWidget {
   final DocumentSnapshot emergencyDataSnapshot;
@@ -67,28 +68,14 @@ class EmergencyDisplayPage extends StatelessWidget {
     final Timestamp timestamp = data['timestamp'];
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Acil Durum Bilgileri'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-      ),
+      backgroundColor: Colors.white12,
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
+        padding: const EdgeInsets.only(top: 60, left: 32, right: 32, bottom: 32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'Acil Durum Bildirimi!',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.error,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
             Card(
-              color: Theme.of(context).colorScheme.primaryContainer,
+              color: const Color(0xFF6D6D6D),
               elevation: 8,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(15),
@@ -100,24 +87,28 @@ class EmergencyDisplayPage extends StatelessWidget {
                   children: [
                     Text(
                       'Konum Bilgileri',
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        color: Colors.white,
                       ),
                     ),
-                    const Divider(height: 20, thickness: 1),
+                    const Divider(height: 20, thickness: 1, color: Colors.white24),
                     _buildInfoRow(
                         context, 'Enlem', location.latitude.toStringAsFixed(6),
-                        icon: Icons.location_on_outlined),
+                        icon: Icons.location_on_outlined,
+                        valueColor: Colors.white70),
                     _buildInfoRow(context, 'Boylam',
                         location.longitude.toStringAsFixed(6),
-                        icon: Icons.location_on_outlined),
+                        icon: Icons.location_on_outlined,
+                        valueColor: Colors.white70),
                     _buildInfoRow(
                         context, 'Zaman Damgası', _formatTimestamp(timestamp),
-                        icon: Icons.access_time),
+                        icon: Icons.access_time,
+                        valueColor: Colors.white70),
                     _buildInfoRow(context, 'Kaynak', data['source'] as String?,
-                        icon: Icons.devices_other),
+                        icon: Icons.devices_other,
+                        valueColor: Colors.white70),
                   ],
                 ),
               ),
@@ -125,7 +116,7 @@ class EmergencyDisplayPage extends StatelessWidget {
             const SizedBox(height: 24),
             if (data['esp32_distance_to_area_m'] != null)
               Card(
-                color: Theme.of(context).colorScheme.tertiaryContainer,
+                color: const Color(0xFF6D6D6D),
                 elevation: 8,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(15),
@@ -137,30 +128,33 @@ class EmergencyDisplayPage extends StatelessWidget {
                     children: [
                       Text(
                         'Toplanma Alanı Bilgileri (ESP32 Konumuna Göre)',
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
-                          color:
-                              Theme.of(context).colorScheme.onTertiaryContainer,
+                          color: Colors.white,
                         ),
                       ),
-                      const Divider(height: 20, thickness: 1),
+                      const Divider(height: 20, thickness: 1, color: Colors.white24),
                       _buildInfoRow(context, '  Alan Adı',
                           data['esp32_nearest_area_name'] as String?,
-                          icon: Icons.meeting_room_outlined),
+                          icon: Icons.meeting_room_outlined,
+                          valueColor: Colors.white70),
                       _buildInfoRow(
                           context,
                           '  Alanda Mesafe',
                           data['esp32_distance_to_area_m'] != null
                               ? '${(data['esp32_distance_to_area_m'] as num).toStringAsFixed(1)} m'
                               : null,
-                          icon: Icons.space_dashboard_outlined),
+                          icon: Icons.space_dashboard_outlined,
+                          valueColor: Colors.white70),
                       _buildInfoRow(context, '  Alanda Yön',
                           data['esp32_direction_to_area'] as String?,
-                          icon: Icons.navigation_outlined),
+                          icon: Icons.navigation_outlined,
+                          valueColor: Colors.white70),
                       _buildInfoRow(context, '  Uydu Sayısı',
                           (data['esp32_satellites'] as int?)?.toString(),
-                          icon: Icons.satellite_alt_outlined),
+                          icon: Icons.satellite_alt_outlined,
+                          valueColor: Colors.white70),
                     ],
                   ),
                 ),
@@ -170,9 +164,12 @@ class EmergencyDisplayPage extends StatelessWidget {
               icon: const Icon(Icons.arrow_back_ios_new_rounded),
               label: const Text('Anasayfaya Dön'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.secondary,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                backgroundColor: Colors.red[700],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               onPressed: () {
                 Navigator.popUntil(context, (route) => route.isFirst);
@@ -182,6 +179,7 @@ class EmergencyDisplayPage extends StatelessWidget {
           ],
         ),
       ),
+      bottomNavigationBar: const NavBar(selectedIndex: 1),
     );
   }
 }
