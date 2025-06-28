@@ -2,8 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter/foundation.dart'; // kDebugMode için eklendi
-import 'navbar.dart'; // Added NavBar import
+import 'package:flutter/foundation.dart';
+import 'navbar.dart'; // Mevcut import korundu
 
 class EmergencyDisplayPage extends StatelessWidget {
   final DocumentSnapshot emergencyDataSnapshot;
@@ -14,10 +14,9 @@ class EmergencyDisplayPage extends StatelessWidget {
     if (timestamp == null) return 'Bilinmiyor';
     try {
       return DateFormat('dd MMMM yyyy, HH:mm:ss', 'tr_TR')
-          .format(timestamp.toDate());
+          .format(timestamp.toDate().toLocal());
     } catch (e) {
-      if (kDebugMode)
-        print("Tarih formatlama hatası: $e"); // kDebugMode doğru import edildi
+      if (kDebugMode) print("Tarih formatlama hatası: $e");
       return timestamp.toDate().toLocal().toString().substring(0, 19);
     }
   }
@@ -49,10 +48,7 @@ class EmergencyDisplayPage extends StatelessWidget {
             flex: 6,
             child: Text(
               value ?? 'Bilinmiyor',
-              style: TextStyle(
-                color: valueColor,
-                fontSize: 16,
-              ),
+              style: TextStyle(color: valueColor, fontSize: 16),
               textAlign: TextAlign.right,
             ),
           ),
@@ -64,13 +60,16 @@ class EmergencyDisplayPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final data = emergencyDataSnapshot.data() as Map<String, dynamic>;
-    final GeoPoint location = data['location'];
-    final Timestamp timestamp = data['timestamp'];
+    // DÜZELTME: Veritabanında 'location' alanı yerine 'latitude' ve 'longitude' alanları var.
+    final double? latitude = data['latitude'] as double?;
+    final double? longitude = data['longitude'] as double?;
+    final Timestamp? timestamp = data['timestamp'] as Timestamp?;
 
     return Scaffold(
       backgroundColor: Colors.white12,
       body: SingleChildScrollView(
-        padding: const EdgeInsets.only(top: 60, left: 32, right: 32, bottom: 32),
+        padding:
+            const EdgeInsets.only(top: 60, left: 32, right: 32, bottom: 32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -78,63 +77,56 @@ class EmergencyDisplayPage extends StatelessWidget {
               color: const Color(0xFF6D6D6D),
               elevation: 8,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15),
-              ),
+                  borderRadius: BorderRadius.circular(15)),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Konum Bilgileri',
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const Divider(height: 20, thickness: 1, color: Colors.white24),
+                    const Text('Konum Bilgileri',
+                        style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white)),
+                    const Divider(
+                        height: 20, thickness: 1, color: Colors.white24),
                     _buildInfoRow(
-                        context, 'Enlem', location.latitude.toStringAsFixed(6),
+                        context, 'Enlem', latitude?.toStringAsFixed(6) ?? 'N/A',
                         icon: Icons.location_on_outlined,
                         valueColor: Colors.white70),
                     _buildInfoRow(context, 'Boylam',
-                        location.longitude.toStringAsFixed(6),
+                        longitude?.toStringAsFixed(6) ?? 'N/A',
                         icon: Icons.location_on_outlined,
                         valueColor: Colors.white70),
                     _buildInfoRow(
                         context, 'Zaman Damgası', _formatTimestamp(timestamp),
-                        icon: Icons.access_time,
-                        valueColor: Colors.white70),
+                        icon: Icons.access_time, valueColor: Colors.white70),
                     _buildInfoRow(context, 'Kaynak', data['source'] as String?,
-                        icon: Icons.devices_other,
-                        valueColor: Colors.white70),
+                        icon: Icons.devices_other, valueColor: Colors.white70),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 24),
-            if (data['esp32_distance_to_area_m'] != null)
+            if (data['esp32_distance_to_area_m'] != null ||
+                data['esp32_direction_to_area'] != null)
               Card(
                 color: const Color(0xFF6D6D6D),
                 elevation: 8,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(15),
-                ),
+                    borderRadius: BorderRadius.circular(15)),
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Toplanma Alanı Bilgileri (ESP32 Konumuna Göre)',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const Divider(height: 20, thickness: 1, color: Colors.white24),
+                      const Text('Toplanma Alanı Bilgileri',
+                          style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white)),
+                      const Divider(
+                          height: 20, thickness: 1, color: Colors.white24),
                       _buildInfoRow(context, '  Alan Adı',
                           data['esp32_nearest_area_name'] as String?,
                           icon: Icons.meeting_room_outlined,
@@ -150,7 +142,7 @@ class EmergencyDisplayPage extends StatelessWidget {
                       _buildInfoRow(context, '  Alanda Yön',
                           data['esp32_direction_to_area'] as String?,
                           icon: Icons.navigation_outlined,
-                          valueColor: Colors.white70),
+                          valueColor: Colors.yellowAccent),
                       _buildInfoRow(context, '  Uydu Sayısı',
                           (data['esp32_satellites'] as int?)?.toString(),
                           icon: Icons.satellite_alt_outlined,
@@ -166,10 +158,10 @@ class EmergencyDisplayPage extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red[700],
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                    borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () {
                 Navigator.popUntil(context, (route) => route.isFirst);

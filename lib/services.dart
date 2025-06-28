@@ -1,14 +1,11 @@
-// lib/services.dart
 import 'package:cloud_firestore/cloud_firestore.dart'
     show
         FirebaseFirestore,
         FieldValue,
         GeoPoint,
         DocumentSnapshot,
-        DocumentReference,
-        QuerySnapshot;
+        DocumentReference;
 import 'package:geolocator/geolocator.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // Bu dosya aslında kullanılmıyor, kaldırılabilir
 import 'package:flutter/foundation.dart';
 
 class EmergencyServices {
@@ -43,14 +40,16 @@ class EmergencyServices {
     required double longitude,
     String? esp32NearestAreaName,
     double? esp32DistanceToAreaM,
-    String? esp32DirectionToArea,
+    String?
+        esp32DirectionToArea, // DEĞİŞTİ: Artık hesaplanan yön buraya gelecek
     int? esp32Satellites,
     String source = "Unknown",
   }) async {
     try {
       DocumentReference docRef =
           await _firestore.collection('emergency_locations').add({
-        'location': GeoPoint(latitude, longitude),
+        'latitude': latitude,
+        'longitude': longitude,
         'timestamp': FieldValue.serverTimestamp(),
         'esp32_nearest_area_name': esp32NearestAreaName,
         'esp32_distance_to_area_m': esp32DistanceToAreaM,
@@ -58,8 +57,9 @@ class EmergencyServices {
         'esp32_satellites': esp32Satellites,
         'source': source,
       });
-      if (kDebugMode)
+      if (kDebugMode) {
         print('Acil durum konumu Firestore\'a kaydedildi: ${docRef.id}');
+      }
       return await docRef.get();
     } catch (e) {
       if (kDebugMode) print('Acil durum konumunu kaydederken hata oluştu: $e');
@@ -67,62 +67,60 @@ class EmergencyServices {
     }
   }
 
+  // YENİ: Dereceyi yön kısaltmasına çeviren yardımcı fonksiyon
+  String getDirectionAbbreviation(double bearing) {
+    if (bearing < 0) bearing += 360; // Negatif dereceleri pozitife çevir
+    if ((bearing >= 337.5) || (bearing < 22.5)) return "K";
+    if ((bearing >= 22.5) && (bearing < 67.5)) return "KD";
+    if ((bearing >= 67.5) && (bearing < 112.5)) return "D";
+    if ((bearing >= 112.5) && (bearing < 157.5)) return "GD";
+    if ((bearing >= 157.5) && (bearing < 202.5)) return "G";
+    if ((bearing >= 202.5) && (bearing < 247.5)) return "GB";
+    if ((bearing >= 247.5) && (bearing < 292.5)) return "B";
+    if ((bearing >= 292.5) && (bearing < 337.5)) return "KB";
+    return "---";
+  }
+
   Future<Map<String, dynamic>> findNearestRendezvousArea(
       double currentLatitude, double currentLongitude) async {
     try {
-      // 'area' koleksiyonundaki 'areas' belgesini al
       DocumentSnapshot areaDoc =
           await _firestore.collection('area').doc('areas').get();
 
       if (!areaDoc.exists) {
-        throw 'Firestore\'da "area" koleksiyonu altında "areas" belgesi bulunamadı.';
+        throw 'Firestore\'da "areas" belgesi bulunamadı.';
       }
 
-      // data() metodu null dönebilir, bu yüzden kontrol etmek önemlidir.
-      // Ayrıca, döndüğü Map'in doğru türde olduğundan emin olmak için açıkça dönüştürüyoruz.
       Map<String, dynamic>? data = areaDoc.data() as Map<String, dynamic>?;
 
       if (data == null || !data.containsKey('areasarray')) {
-        throw 'Firestore\'daki "areas" belgesinde "areasarray" alanı bulunamadı veya hatalı formatta.';
+        throw 'Firestore "areas" belgesinde "areasarray" alanı yok.';
       }
 
-      // areasarray alanına doğrudan erişim
       List<dynamic> rawAreas = data['areasarray'];
       List<GeoPoint> areasList = [];
 
-      // Raw veriyi GeoPoint listesine dönüştürürken null ve hatalı formatları yönet
       for (var item in rawAreas) {
         if (item is GeoPoint) {
           areasList.add(item);
         } else if (item is Map &&
             item.containsKey('_latitude') &&
             item.containsKey('_longitude')) {
-          // Firebase'in bazı sürümlerinde GeoPoint'ler Map olarak dönebilir.
-          // Enlem ve boylam değerlerinin null olmadığından emin ol.
           double? lat = item['_latitude'] as double?;
           double? lon = item['_longitude'] as double?;
-
           if (lat != null && lon != null) {
             areasList.add(GeoPoint(lat, lon));
-          } else {
-            if (kDebugMode)
-              print(
-                  "Hata: Map'ten GeoPoint oluşturulurken enlem/boylam null veya hatalı: $item");
-            // Bu hatalı girişi atla, uygulamayı çökertme
           }
-        } else {
-          if (kDebugMode)
-            print("Geçersiz GeoPoint formatı algılandı ve atlandı: $item");
         }
       }
 
       if (areasList.isEmpty) {
-        throw 'Firestore\'dan geçerli toplanma alanı koordinatları alınamadı.';
+        throw 'Geçerli toplanma alanı koordinatı alınamadı.';
       }
 
       double minDistance = double.infinity;
-      Map<String, dynamic> nearestAreaInfo = {};
-      int nearestAreaIndex = -1; // En yakın alanın indeksi
+      GeoPoint? nearestGeoPoint;
+      int nearestAreaIndex = -1;
 
       for (int i = 0; i < areasList.length; i++) {
         GeoPoint geoPoint = areasList[i];
@@ -135,32 +133,40 @@ class EmergencyServices {
 
         if (distanceInMeters < minDistance) {
           minDistance = distanceInMeters;
+          nearestGeoPoint = geoPoint;
           nearestAreaIndex = i;
-          nearestAreaInfo = {
-            'coordinates': GeoPoint(geoPoint.latitude, geoPoint.longitude),
-            'distance_km': (minDistance / 1000).toStringAsFixed(2),
-            'distance_m': minDistance.toStringAsFixed(1),
-          };
         }
       }
 
-      if (nearestAreaInfo.isEmpty) {
+      if (nearestGeoPoint == null) {
         throw 'En yakın toplanma alanı hesaplanamadı.';
       }
 
-      // Alanın adını indeksine göre belirle (eğer Firestore'da isim yoksa)
-      nearestAreaInfo['name'] =
-          'Area ${nearestAreaIndex + 1}'; // 1'den başlayarak isimlendir
+      // DEĞİŞTİ: Yön (bearing) hesaplaması ve metne çevirme
+      double bearing = Geolocator.bearingBetween(
+        currentLatitude,
+        currentLongitude,
+        nearestGeoPoint.latitude,
+        nearestGeoPoint.longitude,
+      );
+      String directionAbbr = getDirectionAbbreviation(bearing);
+
+      Map<String, dynamic> nearestAreaInfo = {
+        'coordinates': nearestGeoPoint,
+        'distance_km': (minDistance / 1000).toStringAsFixed(2),
+        'distance_m': minDistance.toStringAsFixed(1),
+        'name': 'Alan ${nearestAreaIndex + 1}',
+        'bearing_deg': bearing, // ESP32'ye göndermek için derece
+        'direction_abbr': directionAbbr, // Firestore'a kaydetmek için metin
+      };
 
       if (kDebugMode) {
         print(
-            'En yakın toplanma alanı bulundu: ${nearestAreaInfo['name']}, Koordinatlar: ${nearestAreaInfo['coordinates']}, Uzaklık: ${nearestAreaInfo['distance_km']} km');
+            'En yakın alan: ${nearestAreaInfo['name']}, Uzaklık: ${nearestAreaInfo['distance_km']} km, Yön: ${nearestAreaInfo['direction_abbr']} (${nearestAreaInfo['bearing_deg']})');
       }
       return nearestAreaInfo;
     } catch (e) {
-      if (kDebugMode) {
-        print('En yakın toplanma alanı bulma hatası: $e');
-      }
+      if (kDebugMode) print('En yakın toplanma alanı bulma hatası: $e');
       rethrow;
     }
   }
